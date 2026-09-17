@@ -1,0 +1,191 @@
+:root {
+  --bg:    #0d1015;
+  --panel: #141922;
+  --line:  #242c38;
+  --text:  #dfe4ec;
+  --muted: #8b93a3;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app { display: flex; flex-direction: column; height: 100%; }
+
+/* ------------------------------------------------------------------- bar -- */
+
+.bar {
+  display: flex; align-items: center; gap: 18px;
+  padding: 8px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.bar > strong { letter-spacing: .3px; }
+
+.games { display: flex; gap: 4px; }
+.games button, .zoom button {
+  background: #1c222c; color: var(--text);
+  border: 1px solid var(--line); border-radius: 5px;
+  padding: 4px 11px; cursor: pointer;
+}
+.games button:hover, .zoom button:hover { background: #253040; }
+.games button.on { background: #2f6f7d; border-color: #3d8b9c; }
+
+.search { position: relative; }
+.search input {
+  background: #1c222c; color: var(--text);
+  border: 1px solid var(--line); border-radius: 5px;
+  padding: 5px 10px; width: 210px;
+}
+.hits {
+  position: absolute; top: 110%; left: 0; z-index: 20;
+  width: 300px; max-height: 340px; overflow: auto;
+  margin: 0; padding: 4px; list-style: none;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+}
+.hits button {
+  display: flex; justify-content: space-between; gap: 10px; width: 100%;
+  background: none; border: 0; color: var(--text);
+  padding: 5px 8px; text-align: left; cursor: pointer; border-radius: 4px;
+}
+.hits button:hover { background: #202836; }
+.hits em { font-style: normal; font-size: 11px; }
+
+.legend { display: flex; gap: 14px; color: var(--muted); font-size: 12px; }
+.legend span { display: flex; align-items: center; gap: 6px; }
+.legend i { width: 22px; height: 0; display: inline-block; }
+.legend .solid  { border-top: 2.4px solid #6f9f7a; }
+.legend .thin   { border-top: 1.3px solid #7d8596; }
+.legend .dashed { border-top: 1.3px dashed #7d8596; }
+
+.muted { color: var(--muted); }
+.count { margin-left: auto; font-size: 12px; }
+
+/* ---------------------------------------------------------------- canvas -- */
+
+.canvas { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+.canvas .react-flow { flex: 1 1 auto; }
+
+.mapnode {
+  width: 100%; height: 100%;
+  background: #171d27;
+  border: 1.5px solid #444;
+  border-radius: 7px;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+}
+/* An opened map is a container: dimmed and see-through so the maps placed
+   inside it read as contents rather than as siblings sitting on top of it. */
+.mapnode.container { background: rgba(23,29,39,.55); border-style: dashed; }
+.mapnode.child     { box-shadow: 0 2px 8px rgba(0,0,0,.45); }
+.mapnode.selected  { outline: 2px solid #e0b341; outline-offset: 1px; }
+
+.mapnode-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 7px; font-size: 11.5px; font-weight: 600; color: #eef2f7;
+}
+.mapnode-name  { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mapnode-floor {
+  margin-left: auto; font-size: 10px; opacity: .85;
+  background: rgba(0,0,0,.3); border-radius: 3px; padding: 0 4px;
+}
+.mapnode-count {
+  font-size: 10px; background: rgba(0,0,0,.35);
+  border-radius: 8px; padding: 0 6px;
+}
+.mapnode-meta { padding: 3px 7px; font-size: 10px; color: var(--muted); }
+.handle { opacity: 0; }
+
+/* Edges sit ABOVE the node layer.
+   React Flow gives node wrappers z-index 1..5 and leaves the edge <svg> at auto,
+   so by default an opened map buries every connection running through it — which
+   is exactly the thing you open a map to look at. Lifting the whole edge layer
+   fixes it once, rather than per edge. Unrelated edges fade instead of vanishing,
+   so the region still reads as context. */
+.react-flow__edges { z-index: 9; }
+.react-flow__edge.edge-dim { opacity: .13; }
+.react-flow__edge.edge-lit .react-flow__edge-path {
+  filter: drop-shadow(0 0 4px rgba(224,179,65,.55));
+}
+
+.mapnode.dim { opacity: .3; filter: saturate(.5); }
+.legend .lit { border-top: 3.4px solid #e0b341; }
+
+/* ------------------------------------------------------------------ dock -- */
+
+.dock {
+  position: relative;
+  display: flex; flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  flex: 0 0 auto; min-width: 0;
+}
+
+.grip { background: transparent; }
+.grip:hover, body.dragging .grip { background: #3d8b9c; }
+.grip-x {
+  position: absolute; left: -3px; top: 0; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 30;
+}
+.grip-y { height: 6px; cursor: row-resize; flex: 0 0 auto; }
+body.dragging { cursor: col-resize; user-select: none; }
+
+.dock-head {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px 8px; border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.dock-title h2 { margin: 0; font-size: 15px; }
+.dock-title code { color: var(--muted); font-size: 11px; }
+.close {
+  margin-left: auto; background: none; border: 0;
+  color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer;
+}
+.close:hover { color: var(--text); }
+
+.dock-body { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.dock-pane {
+  display: flex; flex-direction: column; min-height: 0;
+  flex-grow: 0; flex-shrink: 1;
+}
+.dock-pane-label {
+  padding: 5px 12px; font-size: 11px; letter-spacing: .3px;
+  text-transform: uppercase; color: var(--muted);
+  background: #111620; border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.dock-pane-inner { flex: 1 1 auto; min-height: 0; position: relative; }
+.pad { padding: 12px; }
+
+.ascii { display: flex; flex-direction: column; height: 100%; }
+.ascii-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 12px; font-size: 12px; flex: 0 0 auto;
+}
+
+/* ------------------------------------------------------------------ pane -- */
+
+.zoom { display: flex; align-items: center; gap: 6px; }
+.zoom button { padding: 1px 8px; }
+.ascii-wrap { flex: 1 1 auto; overflow: auto; padding: 4px 12px 14px; }
+.ascii-wrap pre {
+  margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  white-space: pre;
+  color: #c9d3e0;
+}
+
+/* React Flow's own chrome, darkened to match. */
+.react-flow__controls-button {
+  background: #1c222c; border-bottom: 1px solid var(--line); fill: var(--text);
+}
+.react-flow__controls-button:hover { background: #253040; }
+.react-flow__minimap { background: #11151c; }

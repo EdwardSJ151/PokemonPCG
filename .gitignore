@@ -2,6 +2,26 @@ oldjson
 pokeemerald
 pokeheartgold
 pokeplatinum
-*.md
+*CLAUDE.md
 *.json
 *.txt
+*.png
+__pycache__
+.claude
+oldterrain
+# viewer: dependencies, build output, and the exported data bundle (all
+# regenerable — `npm install` and `python3 viewer/export_viewer_data.py all`)
+viewer/node_modules
+viewer/dist
+viewer/public/data
+pokemonml
+music
+omp
+terrain_maps_emerald
+terrain_maps_heartgold
+terrain_maps_platinum
+towns_manual
+vgmtrans
+gen4_ai.pdf
+damage-calc
+pokemon-showdown
