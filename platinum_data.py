@@ -3328,27 +3328,47 @@ def render_static_encounter_section(encounters: list,
 # ---------------------------------------------------------------------------
 
 _PT_PRIZE_C = BASE_DIR / "pokeplatinum/src/scrcmd_game_corner_prize.c"
+_PT_ITEM_C       = BASE_DIR / "pokeplatinum/src/item.c"
 _PT_ITEMS_DIR    = BASE_DIR / "pokeplatinum/res/items/data"
 _PT_TM_MAP_H     = BASE_DIR / "pokeplatinum/res/items/item_tm_move_map.h"
 _PT_TM_MOVE_CACHE: dict[str, str] = {}
 _PT_TM_MOVE_LOADED = False
 
+# Matches both:
+#   [TMHM_ID(TM01)] = MOVE_FOCUS_PUNCH,   (inline-array decomp version)
+#   [0] = MOVE_FOCUS_PUNCH,               (generated-header version)
+_PT_TM_ENTRY_RE = re.compile(
+    r"\[TMHM_ID\(TM(\d+)\)\]\s*=\s*(MOVE_\w+)"
+)
+
 
 def _pt_tm_move_name(item_const: str) -> str | None:
     """ITEM_TM90 → 'Substitute'.
 
-    Route 1 (preferred): parse res/items/data/tm*.json teachesMove fields.
-    Route 2 (fallback):  parse res/items/item_tm_move_map.h — the generated C
-                         header that item.c includes, same sTMHMMoves[] format
-                         as pokeheartgold/src/item.c.
-    Hard-warns if both routes yield zero entries (silent cache = invisible bug).
+    Route 1: parse sTMHMMoves[] inline in src/item.c via [TMHM_ID(TM01)]=MOVE_X
+             entries — present in every source-only checkout of this decomp.
+    Route 2: parse res/items/data/tm*.json teachesMove fields (some checkouts).
+    Route 3: parse res/items/item_tm_move_map.h — the generated C header
+             (built checkouts only).
+    Hard-warns if all three yield zero entries (silent cache = invisible bug).
     """
     global _PT_TM_MOVE_LOADED
     if not _PT_TM_MOVE_LOADED:
         _PT_TM_MOVE_LOADED = True
 
-        # Route 1 — per-file JSON (pokeplatinum/res/items/data/tm*.json)
-        if _PT_ITEMS_DIR.exists():
+        # Route 1 — inline sTMHMMoves[] in src/item.c (checkout-independent)
+        if _PT_ITEM_C.exists():
+            text = _PT_ITEM_C.read_text(encoding="utf-8")
+            start = text.find("sTMHMMoves[]")
+            if start != -1:
+                body = text[start: text.find("};", start)]
+                for m in _PT_TM_ENTRY_RE.finditer(body):
+                    num  = int(m.group(1))
+                    move = m.group(2).removeprefix("MOVE_").replace("_", " ").title()
+                    _PT_TM_MOVE_CACHE[f"ITEM_TM{num:02d}"] = move
+
+        # Route 2 — per-file JSON (pokeplatinum/res/items/data/tm*.json)
+        if not _PT_TM_MOVE_CACHE and _PT_ITEMS_DIR.exists():
             for path in _PT_ITEMS_DIR.glob("tm*.json"):
                 try:
                     with open(path, encoding="utf-8") as f:
@@ -3362,7 +3382,7 @@ def _pt_tm_move_name(item_const: str) -> str | None:
                 except Exception:
                     pass
 
-        # Route 2 — generated C header (same sTMHMMoves[] format as HG item.c)
+        # Route 3 — generated C header included by item.c (built checkouts)
         if not _PT_TM_MOVE_CACHE and _PT_TM_MAP_H.exists():
             text = _PT_TM_MAP_H.read_text(encoding="utf-8")
             start = text.find("sTMHMMoves[]")
@@ -3377,7 +3397,8 @@ def _pt_tm_move_name(item_const: str) -> str | None:
             import warnings
             warnings.warn(
                 "platinum_data: TM move table is empty — "
-                "res/items/data/tm*.json not found and "
+                "src/item.c has no inline sTMHMMoves[], "
+                "res/items/data/tm*.json not found, and "
                 "res/items/item_tm_move_map.h not found. "
                 "TM names will be missing from Platinum output.",
                 stacklevel=2,
