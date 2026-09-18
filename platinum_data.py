@@ -2870,7 +2870,7 @@ def render_trainer_section(trainers: list, event_trainers: list = (),
                 lv_str = f"Lv {mon['lvl']}"
                 mv_str = ", ".join(mon.get("moves") or ["(default)"])
                 iv_raw = mon.get('iv_scale', 0)
-                iv_str = f"IV={iv_raw} ({iv_raw * 31 // 255}/31)"
+                iv_str = f"IV={iv_raw} ({iv_raw * 31 // 255 & 0x1F}/31)"
                 lines.append(f"{indent}{mon['species'].title():<18} {lv_str:<6} {iv_str}")
                 if mv_str != "(default)":
                     lines.append(f"{indent}{'':18} Moves: {mv_str}")
@@ -2981,7 +2981,7 @@ def render_gym_leader_section(gym_leaders: list,
             lv_str = f"Lv {mon['lvl']}"
             mv_str = ", ".join(mon.get("moves") or ["(default)"])
             iv_raw = mon.get('iv_scale', 0)
-            iv_str = f"IV={iv_raw} ({iv_raw * 31 // 255}/31)"
+            iv_str = f"IV={iv_raw} ({iv_raw * 31 // 255 & 0x1F}/31)"
             lines.append(f"{indent}{mon['species'].title():<18} {lv_str:<6} {iv_str}")
             if mv_str != "(default)":
                 lines.append(f"{indent}{'':18} Moves: {mv_str}")

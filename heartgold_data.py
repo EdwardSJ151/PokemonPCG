@@ -4182,7 +4182,7 @@ def render_trainer_section(trainers: list, col_off: int = 0,
         for mon in party:
             iv_raw = mon['difficulty']
             lines.append(f"{indent}{mon['species']:<18} Lv {mon['level']:<4}"
-                         f" IV={iv_raw} ({iv_raw * 31 // 255}/31)")
+                         f" IV={iv_raw} ({iv_raw * 31 // 255 & 0x1F}/31)")
             if mon["moves"]:
                 lines.append(f"{indent}{'':18} Moves: {', '.join(mon['moves'])}")
             if mon["item"]:
@@ -4243,7 +4243,7 @@ def render_gym_leader_section(gym_leaders: list,
         for mon in party:
             iv_raw = mon['difficulty']
             lines.append(f"{indent}{mon['species']:<18} Lv {mon['level']:<4}"
-                         f" IV={iv_raw} ({iv_raw * 31 // 255}/31)")
+                         f" IV={iv_raw} ({iv_raw * 31 // 255 & 0x1F}/31)")
             if mon["moves"]:
                 lines.append(f"{indent}{'':18} Moves: {', '.join(mon['moves'])}")
             if mon["item"]:

@@ -563,7 +563,8 @@ def _enc_slots(mons: list, rates: list, use_day: bool = False) -> list[dict]:
         sp = _enc_sp(sp_raw)
         lvl = m.get("level", None)
         if lvl is None:
-            mn, mx = int(m.get("min_level", 1)), int(m.get("max_level", 1))
+            mn = int(m.get("min_level") or m.get("level_min") or 1)
+            mx = int(m.get("max_level") or m.get("level_max") or mn)
         else:
             mn, mx = _enc_lvl(lvl)
         r = rates[i] if i < len(rates) else 0
@@ -897,6 +898,17 @@ def _build_encounters_json(game: str, entry: dict, map_entries: list,
     return enc if enc else None
 
 
+def _party_iv(p: dict, game: str) -> int:
+    """Convert a per-game raw IV byte to the actual 0-31 box field value."""
+    if game == "emerald":
+        raw = p.get("iv", 0)
+    elif game == "heartgold":
+        raw = p.get("difficulty", 0)
+    else:  # platinum
+        raw = p.get("iv_scale", 0)
+    return raw * 31 // 255 & 0x1F
+
+
 def _normalize_rematches(rematches, game: str) -> list:
     """Convert per-game rematch lists to a uniform [{trainer_id, party, prize}] format."""
     out = []
@@ -907,7 +919,7 @@ def _normalize_rematches(rematches, game: str) -> list:
             {
                 "species": p.get("species", ""),
                 "level":   p.get("lvl", p.get("level", 0)),
-                "ivs":     p.get("iv_scale", p.get("iv", 0) // 3 if game == "emerald" else 0),
+                "ivs":     _party_iv(p, game),
                 **( {"moves": [move_display(m) for m in p["moves"] if m and not m.startswith("(")]} if p.get("moves") else {} ),
                 **( {"item":  p["item"]}  if p.get("item")  else {} ),
             }
@@ -1136,7 +1148,7 @@ def render_json(entry: dict, game: str, maps_data: list | None,
                 {
                     "species": p.get("species", ""),
                     "level":   p.get("lvl", 0),
-                    "ivs":     p.get("iv", 0) // 3,
+                    "ivs":     p.get("iv", 0) * 31 // 255 & 0x1F,
                     **( {"moves": [move_display(m) for m in p["moves"] if m and not m.startswith("(")]} if p.get("moves") else {} ),
                     **( {"item":  p["item"]} if p.get("item") else {} ),
                 }
@@ -1164,7 +1176,7 @@ def render_json(entry: dict, game: str, maps_data: list | None,
                 {
                     "species": p.get("species", ""),
                     "level":   p.get("level", 0),
-                    "ivs":     0,
+                    "ivs":     p.get("difficulty", 0) * 31 // 255 & 0x1F,
                     **( {"moves": p["moves"]} if p.get("moves") else {} ),
                     **( {"item":  p["item"]}  if p.get("item")  else {} ),
                     **( {"gender_override":  p["gender_override"]}  if p.get("gender_override")  else {} ),
@@ -1195,7 +1207,7 @@ def render_json(entry: dict, game: str, maps_data: list | None,
                 {
                     "species": p.get("species", ""),
                     "level":   p.get("lvl", p.get("level", 0)),
-                    "ivs":     p.get("iv_scale", 0),
+                    "ivs":     p.get("iv_scale", 0) * 31 // 255 & 0x1F,
                     **( {"moves": p["moves"]} if p.get("moves") else {} ),
                     **( {"item":  p["item"]}  if p.get("item")  else {} ),
                 }
@@ -1349,7 +1361,7 @@ def render_json(entry: dict, game: str, maps_data: list | None,
         for p in party:
             sp = p.get("species", "")
             lv = p.get("lvl") or p.get("level", 0)
-            iv = p.get("iv", 0) if game_ == "emerald" else p.get("iv_scale", 0)
+            iv = _party_iv(p, game_)
             moves = [move_display(m)
                      for m in (p.get("moves") or []) if m and m not in ("", "MOVE_NONE")]
             entry_p: dict = {"species": sp, "level": int(lv), "ivs": iv}
