@@ -12,7 +12,7 @@
 //     (team slot 2) both score 160 and both own SE moves → the first p2
 //     switch MUST be machoke (strict `<` keeps the earlier slot).
 // Temporary — replaced by ai_test.js in the integration phase.
-const Sim = require('/home/pressprexx/Code/GamingResearch/PokemonPCG/pokemon-showdown/dist/sim');
+const Sim = require('../../pokemon-showdown/dist/sim');
 const { Engine } = require('./ai/engine.js');
 
 const ZERO = { hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0 };

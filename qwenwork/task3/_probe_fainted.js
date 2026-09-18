@@ -1,6 +1,6 @@
 
 "use strict";
-const Sim = require("/home/pressprexx/Code/GamingResearch/PokemonPCG/pokemon-showdown/dist/sim");
+const Sim = require("../../pokemon-showdown/dist/sim");
 const ZERO = { hp:0, atk:0, def:0, spa:0, spd:0, spe:0 };
 const pkm = (species, moves) => ({ species, level: 50, ability: "", item: "", nature: "quiet", ivs: ZERO, moves });
 const TEAM_A = [

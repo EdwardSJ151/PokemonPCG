@@ -474,3 +474,218 @@ shouldUseItem → PickCommand order → modules.
   disturbed neither the LCG sequence nor the switch logic).
 - Next: the PickCommand ordering in `decide()` (module scoring loop, BASIC then
   EXPERT, MainSingles final pick), then basic.js.
+
+## Session 2026-09-18 — migration, scoring loop, daemon AI mode, harness (Main agent)
+
+### Migration (this machine = /raid/aluno_edward/PokemonPCG, was /home/pressprexx)
+- node v24.21.0 installed (official tarball → /opt, symlinks /usr/local/bin; apt's nodejs is v12 — useless here).
+- `cd pokemon-showdown && npm install && node build` → dist/ exists; blocked native install-scripts are irrelevant (esbuild works via @esbuild/linux-x64 optional dep; sqlite pkgs are server-only). config.js auto-created by the build.
+- ALL hardcoded `/home/pressprexx/...` require paths repointed → relative `../../pokemon-showdown/dist/sim` (12 files; ast_edit for the 11 single-quote ones, _probe_fainted.js was double-quoted). gen_data.js was already __dirname-based. grep 'pressprexx|/home/|/raid/' over qwenwork js/md = 0 hits (docs use `<repo>`).
+
+### Fork facts learned
+- **Gen5RNG.next() REPLACES `rng.seed` with a NEW array** (dist/sim/prng.js:203 `this.seed = this.nextFrame(this.seed)`) — the old NOTES assumption "advances in place, element write-back restores" is WRONG: engine.dmg()'s element-wise restore was invisible → every damage estimate silently advanced the battle PRNG. Fixed: snapshot/restore the ARRAY REFERENCE (`gen.seed = saved`). Caught by the new T3 unit — the old smoke/probe pins never compared the seed.
+- gen4customgame logs emit `|t:|<epoch-seconds>` lines — real wall-clock; ANY transcript byte-comparison must normalize `\|t:\|\d+` (daemon_test evsFor does; ai_test determinism compares p2-stream transcripts — those carry the t: lines too: two runs in the same second pass, cross-second runs FLAKE. If ai_test ever flakes on determinism, this is why → normalize there as well).
+- getPlayerStreams(base).omniscient is READable (full transcript, end-detect works — smoke/ai_test/daemon all use it). The earlier "omniscient is write-only" note applies to the BattleStream's OWN `.omniscient` property, not the getPlayerStreams copy. BattleStream base write path = streams.omniscient.write.
+- Daemon `request` op after a battle closed ⇒ requireRec throws ⇒ error event: any harness that answers requests asynchronously MUST re-check `rec.closed` at answer time (race: final request line → setImmediate answer → win processed in between).
+
+### Engine (module contract FROZEN — module authors build against this)
+- decide() phases now: wait → team preview → forced switch (postKOSwitchIn) → voluntary switch (shouldSwitch) → item (shouldUseItem/executeUsedItem) → **move evaluation**: initEval (scores 100 legal / 0 invalid; rolls 100−rand%16 for ALL four slots) → modules in canonical flag order (ctx.cancel = BREAK stops later modules) → pickMove = MainSingles verbatim (slot 0 seeds unconditionally; slots 1-3 only with a move; equal append / higher reset; randN tie-break; fork-safety filter pp0/disabled ⇒ 'default').
+- Zero modules = faithful thinkingMask 0 (100s + random tie), NOT a placeholder. Smoke/probe pins survived: switch order is stage-1 driven (dice-independent); first-turn probe roll-pins sit before the move-eval dice.
+- Engine.loadModules(ids|'full', aiDir=__dirname) → sorted by FLAG_ORDER, dedup, throws on bad id / bad shape. Engine opts: {ai|modules, items, aiDir}. "full" = basic+eval_attack+expert.
+- ctx (engine.js buildCtx — authoritative doc in-file): + ctx.flags{SE,NVE,INEFF,LEVITATED,WONDER_GUARD,MAGNET_RISE,IMMUNE}, eachSlot(fn) (decomp per-move walk, skips unusable, checks cancel), addScore/subScore/setScore slot-bound s8, eff→{mask,scaled,class,type}, dmg fork-truth non-crit default, observedMoves/lastHitOf/entryTurn, move/speciesOf/effectOf/moveTypeOf/abilityOf/rawAbilityOf/statOf/itemRec/onDamagingTurn/isGrounded/isTrapped, divide (truncating), aiRand.
+- Observer now live: decide() calls observer.sync() per request (entryTurn, observedMoves dedup ≤4 = RecordLastMove equivalent).
+
+### Daemon (task1/showdown_daemon.js) — AI mode added
+- start: `ai` (string|array|'full') + `aiItems` (≤4, absent/empty ⇒ never uses items) + `aiDir`; modules resolved BEFORE battle (unknown id ⇒ error event, no started — daemon_test checks).
+- p2 reader intercepts |request| → Engine lazily on first request → auto-write choice + {type:'ai',id,choice} event; decide crash ⇒ error event + 'default' fallback (never stalls; documented deviation). request op for p2 in AI mode ⇒ error 'p2 is AI-controlled in this battle'.
+- module.exports {handle, feed, startBattle, battles, emit}; stdio bootstrap gated require.main===module → tests drive it IN-PROCESS (no subprocess anywhere).
+- No `ai` field ⇒ byte-identical playerxplayer (daemon_test proves: 2 concurrent ids/run, per-id event stream identical across runs after normalizing battle-id + |t:|; zero error/ai events).
+
+### Harness files (new)
+- ai_test.js: runAI(opts) exported runner (in-process BattleStream; p1 'default'; engine per p2 request; returns win/choices/transcript/errors/engine). CLI: `node ai_test.js <ids|full|none|all>` = T1 completeness + T2 determinism + T3 PRNG neutrality.
+- daemon_test.js: T0 (a) playerxplayer byte-compat + concurrency, (b) fail-loud unknown id, (c) AI-mode auto-answer + p2 rejection (activates once ai/basic.js exists).
+- Both PASS on this machine (c pending basic.js). eff_smoke/smoke/_probe_switch/_probe_items still ALL PASS post-changes.
+
+### Parallel ports dispatched (hub: Main)
+BasicModule (ai/basic.js), SmallModulesA (eval_attack, setup_first_turn, prioritize_extremes, risky), SmallModulesB (baton_pass, tag_strategy, check_hp, weather, harassment), ExpertModule (expert.js, 133 routines). Contract: module file = {id, bit, decide(ctx)}; forbidden to touch engine/observer/harness; each writes its own <smoke>.js scenario with hand-computed score/choice assertions.
+
+### Audit 2026-09-18 (Main) — SmallModulesA's 4 modules vs decomp C source
+Verified against pokeplatinum/src/battle/trainer_ai/trainer_ai.c (line refs in
+the spec are offset by ~+107 in the C file; search by symbol):
+- The 13-effect NO_CALC list is literally named `sRiskyMoves` in the decomp
+  (trainer_ai.c:31) — NOT the Risky_Main table; sAltPowerCalcMoves:47 = the 11
+  ALT_POWER effects. Both module sets match member-for-member.
+- FlagMoveDamageScore / IfCurrentMoveKills share the eligibility
+  `inAltPower || (power > 1 && !inNoCalcList)`; kill jump = `curHP <= damage`
+  with roll=100 in USE_MAX_DAMAGE mode (>= HP). eval_attack.js matches.
+- Audit flag raised then resolved: prioritize_extremes' `!eligible` for
+  NO_COMPARISON is EXACTLY FlagMoveDamageScore's else-branch. Spec §3 text
+  ("variable-power … reports NO_COMPARISON") contradicts the code — code wins;
+  ALT_POWER moves DO get comparisons.
+- Terminate ≠ BREAK accepted (spec §2 loop: DONE advances moveSlot; only
+  Escape op 61 sets BREAK). All *_Main scripts use Terminate for per-move
+  exits; ctx.cancel only ever maps op 61 (no module sets it so far).
+- eval_attack PRIORITY_1 +2 is unconditional and sequential to the N=170 +4
+  block (no overlap: sets disjoint). Risky table = 24 fork carriers (Shell
+  Smash has none); gate `aiRand(256) >= N` == IfRandomLessThan(N, skip).
+
+### Daemon AI-mode item test finding (Main)
+gen4 Persim Berry cures CONFUSION only (decomp data_items, burn-cure is gen5+)
+— do not test cure items by modern-memory. aiItems ids are data_items keys
+('persimberry', 'full_restore', …). Battle record: daemon.battles.get(id) =
+{base, streams, closed, ai} — the live battle is rec.base.battle (NO rec.battle).
+
+### Audit 2026-09-18b (Main) — baton_pass / weather / harassment / check_hp vs script.s
+- baton_pass.js == script.s:6551-6619 line-for-line incl. the +3→SetupAtHighHP
+  fall-through (no PopOrEnd at 6579) and the first-match-wins atk/spa ladder
+  (comment 6612 "for each" is wrong, single award per the jumps). Dice: per-slot
+  31.25% bail ONLY when attacker lacks Baton Pass; 20/256 bail otherwise.
+- weather.js: fall-through quirk CONFIRMED (7977→7979 no jump) — every non-weather
+  move on turn 1 takes the Weather_Sun gate (+5 iff sunny-not-already AND
+  LoadIsFirstTurnInBattle). IsFirstTurnInBattle = fakeOutTurnNumber >= totalTurns
+  (trainer_ai.c:2594 negation) → only battle leads can pass; behind the turn-1
+  gate entryTurn===turn is the exact equivalent. Raw weather field read (not
+  effectiveWeather) — Cloud Nine would NOT suppress the check in-decomp; fork gap
+  only if such an ability existed (gen4 has Cloud Nine; noted as latent fork diff).
+- harassment.js == script.s:8024-8058 (34 effects + TABLE_END; spec "35" counted
+  the terminator).
+- check_hp.js: all 5 tables set-equal to script.s (12/46/51/42/61uniq; raw 62 has
+  the double-listed HALVE_HP quirk as a deduped Set literal); TARGET_HIGH empty ✓;
+  dice ONLY on table match, round-2 always runs (7705 skips straight to Target),
+  two independent N=50 rolls → up to −4 ✓. Partner subroutine (TagStrategy_Partner
+  re-use) ported doubles-only; singles no-op; needs a doubles test for full audit.
+
+### basic.js audit + OHKO-scope fix (Main, after BasicModule report)
+- Main path (script.s:52-131) verified; basic_smoke 10 scenarios/24 pins PASS.
+- FIX applied: OHKO damage-skip is move-id based (FISSURE, HORN_DRILL only).
+  Effect-based wrongly ran CheckForImmunity for guillotine/sheercold (power 0 ⇒
+  NO_COMPARISON ⇒ immunity skipped in decomp). Behavioral proof: sheercold vs
+  forced-Levitate zapdos = [100] post-fix (pre-fix 88); fissure unchanged 68.
+  CheckOHKOWouldFail class-0 −10 stays effect-dispatched (guillotine vs Ghost = 90, correct).
+- basic_smoke pins + ai_test basic PASS post-fix.
+- Fork bug (NOT the AI): two consecutive Razor Wind charges in gen4customgame
+  stall the battle (no |request| after the 2nd charge turn). Avoid razorwind in
+  scenarios; do not use as filler move.
+- Engine/observer gap list from BasicModule (all worked around in-module):
+  LoadRecycleItem = ITEM_NONE (fork has no recycle-memory for the AI) →
+  CheckCanRecycle constant -10; MOVE_EFFECT_IMPRISONED defender state absent;
+  CheckEmbargo item/FRONTIER gates unreachable; Camouflage ≈ already-Normal; no
+  Fog; mudsport/watersport live in field.pseudoWeather; stockpile layers RESOLVED
+  = volatiles.stockpile.layers.
+
+### SmallModulesB accepted (Main audit)
+- All 5 modules solo-green + 10-module combined green + daemon_test green.
+- small_b_smoke 26 pins PASS; table counts independently set-diffed by Main too.
+- KEY FACT (upends my earlier README assumption): tag_strategy is NOT a
+  singles no-op — the decomp's zeroed battleMons[partner] makes partner-move
+  checks fire deterministic penalties in singles exactly as on-cartridge
+  (EQ/Magnitude/Discharge/Surf −3, non-Surf Water −1 via Storm Drain gate
+  fallthrough script.s:7283, Trick Room −30). Verified independently: EQ lead
+  scores [97,101,100,100] under tag_strategy alone.
+- Preserved script bugs (in-module, cited): SolarPower band fall-through,
+  Lava Plume Dry Skin −3 (comment lies), Discharge ordering, Acupressure fall-through.
+
+### ExpertModule accepted + OBSERVER FIX (Main)
+- expert.js: dispatch verified by independent programmatic diff — 178 entries,
+  EXACT script.s:1628-1805 order, first-match-wins, dead duplicated
+  SKIP_CHARGE_TURN_IN_SUN kept. expert_smoke 31 hand-computed pins PASS
+  (LCG pinned constant; every IfRandomLessThan consumes exactly one draw).
+- **observer.js bug fixed** (found by ExpertModule): battle.log lines carry the
+  LEADING '|' — split('|')[0]==='' meant switch/move cases NEVER matched;
+  entryTurn/observedMoves were dead all along, so every IfMove*Known /
+  ForceSwitch entry check silently read "knows nothing / turn 0". Fix:
+  line.slice(1).split('|'). Stamp semantics: entryTurn[s][slot] = battle.turn at
+  the mon's first request after its |switch| (leads ⇒ 1). weather.js gate
+  adjusted to entryTurn===turn (was +1 variant tuned to the dead observer).
+  Post-fix full sweep green: basic/small_a/small_b/switch/eff/smoke/probes/
+  daemon + ai_test all (11 solos + full + basic,weather + none) + all-11 mask
+  (19 decisions, 0 PRNG leaks).
+- LoadIsFirstTurnInBattle decomp quirk (for the record): fakeOut stays >=
+  totalTurns for TWO decision turns after entry (not one) — expert's local
+  scanner models this; weather never sees turn >1 anyway.
+- AI seed construction: (words[1]<<16)|words[0] from prngSeed (NOTES-pinned).
+
+### play.js — interactive terminal client (2026-09-18)
+`node qwenwork/task3/play.js [ids]`: daemon in-process (stdout JSON hooked),
+hardcoded TEAMS + CPU bag, module menu per battle, `d`=default, `q`=quit.
+Facts learned: this fork's requests are OLD-FORMAT — `{wait:true}` between
+turns (must be acked, `default` passes), top-level `forceSwitch:bool[]`,
+`teamPreview` — no `request` wrapper; `active` is an ARRAY of slots.
+readline/promises `.question()` LOSES piped lines emitted between awaits —
+play.js queues `line` events instead. Verified: scripted full battle (15
+turns, win, 0 stray protocol lines on stdout), back-to-back battles (stale-id
+event filter), real PTY via `script` (CPU beat first-move-only play vs
+basic+risky).
+
+### play.js cartridge-style HUD (2026-09-18)
+Display-only rework of play.js — daemon/protocol untouched (simulator compat
+is priority; HUD lives entirely client-side). Live terminal now renders:
+trainer remaining-ball count, both active mons + level + status chip +
+colored HP bar, weather/field-effects strip, game-style message log ("Foe
+Machoke used Bulk Up!" mapped from |-move|/-status/-weather/-sidestart|...
+lines; formats sampled live: weather = `|-weather|X` / `|[upkeep]` /
+`|[end]`), 2x2 move grid, ←→↑↓/enter/p keys. Piped stdin keeps the old
+numbered menus (all scripted smokes unchanged). PTY lessons (now handled): a
+burst write ("←\r") must be parsed into a key FIFO; external SIGINT exits 1
+by default — in-terminal Ctrl-C reaches raw mode as \x03 and quits cleanly.
+Verified via hub PTY session: full preset→battle→KO flow, [SLP] chip, bar
+drops, PP burn, p→switch submenu.
+
+### HUD message completeness + turn history (2026-09-18)
+User session log (play_log_your_session.txt) proved the recorder captured
+everything while the HUD dropped it. Mappings added: -immune ("But it
+doesn't affect Foe X…" — ghost-vs-Normal Blissey wall + Ground-vs-Electric,
+9 occurrences in one session), -ability [immune], -singleturn/-activate
+Protect, -miss, -fail, -start/-end Substitute, -drain (bars move both ways),
+-damage/-heal '[of]' target (recoil bars), drag ⇒ "X was dragged out!".
+Message area = per-turn blocks: |turn|N opens a block, keep 3 blocks (turn 4
+drops turn 1), trim 3 msgs older / 4 newest, adaptive to terminal rows so
+the move menu never scrolls off (rows<=24 → 2 blocks; verified at 24 and 40).
+Hud exported for replay tests; ball() clamped. Session recorder: every
+daemon event + '> choice' lines to play_log.txt (PLAY_LOG= override).
+
+### HUD message grouping (2026-09-18)
+Trim windows could hide "X used Bulk Up!" behind its own effect lines. Now
+effects (boost/crit/effective/immune/protect/miss/fail/drain) APPEND to the
+causing move's message; same-mover stat lines shorten ("Foe Machoke used
+Bulk Up! Attack rose! Defense rose!"). Wrap-aware row budget (columns/rows)
+keeps the menu on-screen; 90-char group cap; budget counts wrapped lines.
+
+### Double-advance bug: the WAIT ack (2026-09-18)
+Human report: "1 enter/selection equals two clicks." Root cause is NOT input
+duplication — the recorder (key + choice audit) showed exactly one key and one
+choice per turn. The fork sends `{"wait":true}` requests (informational:
+"you're done, watch the animations"). This fork's `Side.choose(input)` CLEARS
+the accumulated choice first (side.ts:1196) then re-accumulates, so answering
+the WAIT with `default` while the next turn's request is pending queues a
+default move for that next turn — the turn then commits instantly with no key
+press. Engine.decide already returns null on waits (so AI-vs-AI runs are
+immune); the leaks were play.js's wait-ack and, defensively, the daemon's p2
+auto-answer, both of which now skip `wait` requests entirely (no ack — the
+fork needs none). The old clean-room probe missed it because it never raced
+the wait gap the way the interactive loop does.
+Also hard (input side, kept regardless): parseKeys collapses `\r\n`/`\n\r`
+(CRLF terminals) to ONE enter, and keyOnce drops identical-key repeats within
+120 ms (auto-repeat/sticky keys) — both were real double-consume paths too.
+Legacy piped regression note: `d` is the safe filler choice (`1` is invalid
+at forced-switch menus — party indices start at 2).
+
+### Teams had NO abilities; HUD hid causes (2026-09-18)
+User watched Earthquake hit their Levitate Gengar super-effective and a
+"random" freeze. Two real bugs:
+1. `pkm()` (ai_test.js, the shared team builder) hardcoded `ability: ''` —
+   every mon fought abilityless (requests showed `baseAbility:""`): no
+   Levitate on Gengar, no Immunity on Snorlax, and every ability-reading AI
+   module scored against nothing. Fixed: default = gen4 dex ability #1
+   (Sim.Dex.mod('gen4').species.get(s).abilities['0']); per-set override
+   via extra. Probe: EQ vs Gengar is now `|-immune|` × all turns, 0 damage.
+   All suites re-run green (choices legitimately shift vs old logs).
+2. HUD: `|-curestatus|…|[msg]` was silent, and per-turn trim dropped the
+   OLDEST line of each block — which was precisely the causal "used X!"
+   line (frozen Snorlax appeared out of nowhere because "Foe Blissey used
+   Ice Beam! A critical hit!" had been trimmed). gen4 `frz` thaws with 20%
+   probability in onBeforeMove (data/mods/gen4/conditions.ts) — that roll
+   winning is legal, the missing text made it look illegal. Fixed: cure
+   messages render ("Your Snorlax thawed out!", slp→"woke up!" etc,
+   [silent] skipped); newest turn keeps ALL lines (cap 6), older blocks
+   keep first line + last 2 so the opener survives.

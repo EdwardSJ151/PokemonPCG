@@ -3,7 +3,7 @@
 // battle with abilities/items/volatiles hand-set around each case. Cases
 // evaluate immediately (C = check), so transient state is per-case. Temporary —
 // assertions fold into ai_test.js in the integration phase.
-const Sim = require('/home/pressprexx/Code/GamingResearch/PokemonPCG/pokemon-showdown/dist/sim');
+const Sim = require('../../pokemon-showdown/dist/sim');
 const { Engine, SE, NVE, INEFF, LEVITATED, WONDER_GUARD, MAGNET_RISE } = require('./ai/engine.js');
 
 const ZERO = { hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0 };

@@ -35,7 +35,7 @@ import struct
 import sys
 from pathlib import Path
 
-BASE_DIR  = Path(__file__).parent
+BASE_DIR  = Path(__file__).resolve().parent.parent   # repo root (script lives in qwenwork/)
 EMERALD   = BASE_DIR / "pokeemerald"
 HEARTGOLD = BASE_DIR / "pokeheartgold"
 PLATINUM  = BASE_DIR / "pokeplatinum"

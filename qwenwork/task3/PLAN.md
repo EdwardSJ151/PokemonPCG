@@ -1,6 +1,6 @@
 # Task 3 Plan — Trainer AI in the Showdown daemon
 
-Status: **IN PROGRESS** (2026-09-16). All decomp C (§1/§4/§5) and engine API unknowns resolved via probes; implementation underway in `qwenwork/task3/ai/`. Deviations & engine facts recorded at the end of this document.
+Status: **DONE** (2026-09-18). All 11 flag modules ported, solo- and combination-tested (`ai_test.js all`, all-11 mask), daemon AI mode wired + regression-green (`daemon_test.js`); machine-independent (relative requires; node ≥ 16, developed/tested on 24). Per-module audit status and protocol: `qwenwork/task3/README.md`; deviations, pinned constants, and session log: `qwenwork/task3/NOTES.md`.
 
 ## Goal
 

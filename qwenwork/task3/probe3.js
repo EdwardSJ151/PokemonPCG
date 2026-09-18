@@ -1,7 +1,7 @@
 // Throwaway probe 3: dual substream consumers; inspect request JSON, live volatiles,
 // side conditions, weather, ability suppression in a gen4 battle.
 'use strict';
-const Sim = require('/home/pressprexx/Code/GamingResearch/PokemonPCG/pokemon-showdown/dist/sim');
+const Sim = require('../../pokemon-showdown/dist/sim');
 const P = (label, v) => console.log(`${label}: ${typeof v === 'object' ? JSON.stringify(v) : v}`);
 
 const IVS = { hp: 31, atk: 31, def: 31, spe: 31, spa: 31, spd: 31 };

@@ -44,7 +44,10 @@ class Observer {
 		this.turn = this.battle.turn;
 
 		for (const line of fresh) {
-			const parts = line.split('|').filter((p) => p !== undefined);
+			// battle.log lines carry the LEADING '|': "switch|src|…" is
+			// parts[0]; split('|') alone yields '' there (observer bug found
+			// by ExpertModule — entryTurn/observedMoves were dead before).
+			const parts = line.slice(1).split('|');
 			switch (parts[0]) {
 			case 'switch':
 			case 'replace': {

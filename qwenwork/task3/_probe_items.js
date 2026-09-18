@@ -3,7 +3,7 @@
 // against live battle state. Each scenario = a real battle; the probe runs on
 // the first real turn request (undefined return = try again next request).
 // Deterministic (AICpuLcg seeded from the battle seed). Deleted in cleanup.
-const Sim = require('/home/pressprexx/Code/GamingResearch/PokemonPCG/pokemon-showdown/dist/sim');
+const Sim = require('../../pokemon-showdown/dist/sim');
 const { Engine } = require('./ai/engine.js');
 const ITEMS = require('./ai/data_items.js');
 

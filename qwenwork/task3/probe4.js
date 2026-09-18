@@ -1,7 +1,7 @@
 // Throwaway probe 4: apply side/pseudo/volatile/weather conditions directly on a live
 // gen4 battle and print the resulting storage shapes.
 'use strict';
-const Sim = require('/home/pressprexx/Code/GamingResearch/PokemonPCG/pokemon-showdown/dist/sim');
+const Sim = require('../../pokemon-showdown/dist/sim');
 const P = (label, v) => console.log(`${label}: ${typeof v === 'object' ? JSON.stringify(v) : v}`);
 
 const IVS = { hp: 31, atk: 31, def: 31, spe: 31, spa: 31, spd: 31 };

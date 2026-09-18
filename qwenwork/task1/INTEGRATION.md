@@ -91,12 +91,12 @@ Requests (stdin):
 
 | op | fields | effect |
 |----|--------|--------|
-| `start` | `id`, `formatid?` (default `gen4customgame`), `seed?` (default `[7,3,11,5]`), `name1`, `team1`, `name2`, `team2` | create the battle, register p1 then p2 |
+| `start` | `id`, `formatid?` (default `gen4customgame`), `seed?` (default `[7,3,11,5]`), `name1`, `team1`, `name2`, `team2`, `ai?`, `aiItems?`, `aiDir?` | create the battle, register p1 then p2; `ai` (see below) switches p2 to the built-in trainer AI |
 | `request` | `id`, `side: p1\|p2`, `choice` | submit that side's choice for the turn |
 | `cancel` | `id`, `side?` | `>forcetie` (no side) or `>forcewin <side>` |
 
 Events (stdout, one JSON per line): `{"type":"started"|"line"|"request"|
-"cancelled"|"win"|"error","id",…}` — `line` carries one raw protocol line
+"ai"|"cancelled"|"win"|"error","id",…}` — `line` carries one raw protocol line
 with `side: omni|p1|p2`; `win.result` is the winner's name, or `"tie"` /
 `"ended"`; `error` never kills the process.
 
@@ -114,6 +114,15 @@ Example session (abridged):
 ← {"type":"win","id":"b1","result":"CPU"}
 ```
 
+**AI mode (task 3)**: with `"ai"` set to module id(s) — e.g.
+`"expert"`, `["basic","weather"]`, `"full"` (basic+eval_attack+expert), or
+`[]` (engine-only: switching + items + random moves) — the daemon answers
+every p2 `|request|` in-process with the Gen 4 trainer AI and emits an
+`ai` event (`{"type":"ai","id","choice"}`) per decision; a `request` op for
+p2 is then rejected, and `aiItems` (≤4, decomp item ids like
+`"persimberry"`) is the trainer's bag. Unknown module ids fail the start
+with an `error` event (no battle created). See `qwenwork/task3/README.md`.
+
 Verified (smoke test): battle to win via request ops; two concurrent
 battle ids; `cancel` → `|tie`; `cancel` with `side` → `|win|<that side>`;
 unknown op and request-after-end both produce `error` events with the
@@ -123,10 +132,11 @@ process staying alive.
 
 Java owns both sides' decisions: it parses its own `|request|` JSON from
 the p1 stream, picks a choice string (1-based indices), and forwards it.
-The CPU side (p2) is driven by the reimplementation documented in
-`qwenwork/task2/TRAINER_AI.md` — for now the daemon tests drive p2 with
-trivial policies, which is enough to exercise the protocol end to end.
-
-The Java trainer AI should be
-tuned to match *this* engine, and where it diverges from the decomp, that
-is documented in Task 2.
+The CPU side (p2) can be driven either by Java (default, via `request`
+ops) or by the daemon itself in **AI mode** — the Gen 4 Platinum trainer AI
+reimplementation (spec `qwenwork/task2/TRAINER_AI.md`, implementation and
+protocol details in `qwenwork/task3/README.md`). The AI runs inside the
+daemon process against the live `Battle` object: no subprocesses, no extra
+data layer, and where the fork diverges from the cartridge that is
+documented (NOTES.md). The reimplementation is tuned to *this* engine;
+carriage-vs-fork deltas are listed in Task 2 / Task 3 notes.

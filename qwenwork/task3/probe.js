@@ -1,6 +1,6 @@
 // Throwaway probe: pin the fork engine surface for the task3 AI port.
 'use strict';
-const Sim = require('/home/pressprexx/Code/GamingResearch/PokemonPCG/pokemon-showdown/dist/sim');
+const Sim = require('../../pokemon-showdown/dist/sim');
 
 const out = [];
 const P = (label, v) => console.log(`${label}: ${typeof v === 'object' ? JSON.stringify(v) : v}`);

@@ -15,10 +15,21 @@
  *
  * Requests (stdin, one JSON object per line):
  *   {"id":"b1","op":"start","formatid":"gen4customgame","seed":[7,3,11,5],
- *    "name1":"You","team1":[{...}], "name2":"Trainer","team2":[{...}]}
+ *    "name1":"You","team1":[{...}], "name2":"Trainer","team2":[{...}],
+ *    "ai":"expert" | ["basic","weather"] | "full" | [], // optional: drive p2 with
+ *    "aiItems":["potion",…],                         //   the Gen 4 trainer AI
+ *    "aiDir":"/abs/path/to/ai"}                      //   (task 3); aiDir optional
  *   {"id":"b1","op":"request","side":"p1","choice":"move 1"}
  *   {"id":"b1","op":"cancel"}               // force a tie
  *   {"id":"b1","op":"cancel","side":"p2"}   // force p2 to win
+ *
+ * With "ai" set (even an empty list = engine-only AI: item + switch logic,
+ * random legal moves), p2 is AI-controlled: the daemon auto-answers p2's
+ * |request| lines in-process (engine = qwenwork/task3/ai/engine.js, module
+ * ids resolved BEFORE the battle starts — an unknown id fails the start).
+ * A "request" op for side p2 in that mode is rejected. "aiItems" is the
+ * trainer's 4-slot item pocket (absent/empty ⇒ the AI never uses items).
+ * Unknown ai ids and malformed teams are reported as error events.
  *
  * Choices are 1-based, as in Gen 4: "move 1..4" (or a move id/name),
  * "switch 1..N", "team 1..N". An invalid choice yields an |error| line to
@@ -29,6 +40,7 @@
  *   {"type":"line","id":"b1","side":"omni","line":"|turn|1"}
  *   {"type":"line","id":"b1","side":"p1","line":"|request|{...}"}
  *   {"type":"request","id":"b1","side":"p1"}   // ack for a request op
+ *   {"type":"ai","id":"b1","choice":"move 2"}  // AI mode: each p2 decision
  *   {"type":"win","id":"b1","result":"Trainer"} // winner name, or "tie"/"ended"
  *   {"type":"error","id":"b1","error":"..."}
  *
@@ -37,7 +49,11 @@
  */
 'use strict';
 
-const Sim = require('/home/pressprexx/Code/GamingResearch/PokemonPCG/pokemon-showdown/dist/sim');
+const Sim = require('../../pokemon-showdown/dist/sim');
+
+// The task-3 AI engine (machine-independent relative path; default aiDir
+// inside Engine.loadModules is that file's own directory).
+const { Engine } = require('../task3/ai/engine.js');
 
 const battles = new Map(); // id -> { base, streams, closed }
 
@@ -46,9 +62,22 @@ function emit(obj) {
 }
 
 function startBattle(id, req) {
+	// AI mode: resolve modules FIRST (fail loud before any state change).
+	// `ai` may be an explicit empty list — engine-only AI (item logic, no
+	// scoring modules); a non-empty `aiItems` alone also turns AI on.
+	let ai = null;
+	if (req.ai !== undefined && req.ai !== null) {
+		ai = { modules: Engine.loadModules(req.ai, req.aiDir) };
+	} else if (Array.isArray(req.aiItems) && req.aiItems.length) {
+		ai = { modules: [] };
+	}
+	if (ai) {
+		ai.items = Array.isArray(req.aiItems) ? req.aiItems.slice(0, 4) : [];
+		ai.engine = null;
+	}
 	const base = new Sim.BattleStream();
 	const streams = Sim.getPlayerStreams(base);
-	const rec = { base, streams, closed: false };
+	const rec = { base, streams, closed: false, ai };
 	battles.set(id, rec);
 	base.write(`>start ${JSON.stringify({
 		formatid: req.formatid || 'gen4customgame',
@@ -68,6 +97,33 @@ function startBattle(id, req) {
 				for await (const chunk of streams[key]) {
 					for (const line of chunk.split('\n')) {
 						if (!line) continue;
+						if (rec.ai && label === 'p2' && line.startsWith('|request|')) {
+							// AI mode: answer p2 in-process. The battle is quiescent
+							// at |request| (PLAN.md Background), so this is race-free.
+							try {
+								const rq = JSON.parse(line.slice('|request|'.length));
+								// {"wait":true} = informational ("you're done, watch").
+								// Answering it re-runs side.choose(), which CLEARS the
+								// finished choice and queues a default for the NEXT
+								// turn (fork side.choose clears then re-accumulates).
+							if (!rq.wait) {
+								if (!rec.ai.engine) {
+									rec.ai.engine = new Engine(base.battle,
+										{ modules: rec.ai.modules, items: rec.ai.items });
+								}
+								const choice = rec.ai.engine.decide(rq);
+								if (choice !== null && choice !== undefined) {
+									rec.ai.engine && streams.p2.write(choice);
+									emit({ type: 'ai', id, choice });
+								}
+							}
+							} catch (err) {
+								emit({ type: 'error', id, error: `ai decide: ${err && err.stack || err}` });
+								// never stall the battle on an engine bug: fall back to
+								// the first legal action (documented deviation)
+								streams.p2.write('default');
+							}
+						}
 						emit({ type: 'line', id, side: label, line });
 						if (label !== 'omni') continue;
 						const w = line.match(/^\|win\|(.*)$/);
@@ -107,6 +163,9 @@ function handle(req) {
 			break;
 		case 'request': {
 			const rec = requireRec(id);
+			if (rec.ai && req.side === 'p2') {
+				throw new Error('p2 is AI-controlled in this battle');
+			}
 			rec.streams[req.side].write(req.choice);
 			emit({ type: 'request', id, side: req.side });
 			break;
@@ -125,22 +184,31 @@ function handle(req) {
 	}
 }
 
-let buf = '';
-process.stdin.on('data', d => {
-	buf += d.toString();
-	let i;
-	while ((i = buf.indexOf('\n')) >= 0) {
-		const line = buf.slice(0, i).trim();
-		buf = buf.slice(i + 1);
-		if (!line) continue;
-		let req;
-		try {
-			req = JSON.parse(line);
-		} catch (err) {
-			emit({ type: 'error', error: `bad request line: ${err.message}` });
-			continue;
-		}
-		handle(req);
+// In-process entry (tests import this; the stdio bootstrap below runs only
+// when executed directly — no subprocesses anywhere in the AI path).
+function feed(line) {
+	let req;
+	try {
+		req = JSON.parse(line);
+	} catch (err) {
+		emit({ type: 'error', error: `bad request line: ${err.message}` });
+		return;
 	}
-});
-process.stdin.on('end', () => process.exit(0));
+	handle(req);
+}
+
+module.exports = { handle, feed, startBattle, battles, emit };
+
+if (require.main === module) {
+	let buf = '';
+	process.stdin.on('data', d => {
+		buf += d.toString();
+		let i;
+		while ((i = buf.indexOf('\n')) >= 0) {
+			const line = buf.slice(0, i).trim();
+			buf = buf.slice(i + 1);
+			if (line) feed(line);
+		}
+	});
+	process.stdin.on('end', () => process.exit(0));
+}

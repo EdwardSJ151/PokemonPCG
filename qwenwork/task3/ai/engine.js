@@ -12,6 +12,7 @@
 //     opts.ignoreType / opts.ignoreImmunities = the SYSCTL_IGNORE_* bits (the
 //     flat-damage path): no STAB, SE/NVE cleared post-chart.
 
+const path = require('path');
 const { AICpuLcg } = require('./rand.js');
 const { Observer } = require('./observer.js');
 const MOVES = require('./data_moves.js');
@@ -33,6 +34,12 @@ const BOOST_STAT_IDX = { atk: 1, def: 2, spatk: 4, spdef: 5, speed: 3, acc: 6 };
 const STAGES_KEYS = { atk: 'atk', def: 'def', spe: 'speed', spa: 'spatk', spd: 'spdef', accuracy: 'acc' };
 
 function s8(x) { return ((x & 0x80) ? (x - 0x100) : (x & 0xFF)); }
+
+// Canonical flag order (spec §6 bits 0→10). Loaded modules run in this
+// order regardless of the order requested (PLAN §B).
+const FLAG_ORDER = ['basic', 'eval_attack', 'expert', 'setup_first_turn',
+	'risky', 'prioritize_extremes', 'baton_pass', 'tag_strategy',
+	'check_hp', 'weather', 'harassment'];
 
 // fork spells type names capitalized ("Ground"); normalize to the decomp index ids
 const normType = (t) => (t ? String(t).toLowerCase() : '');
@@ -135,17 +142,46 @@ class Engine {
 		this.usedItemType = 'MAX';
 		this.usedItemCondition = 0;
 		this.lastActive = {}; // per side: active mon seen at the last decision (fakeOut proxy)
+		// Per-battle protocol observer + loaded AI modules. Modules are
+		// resolved by the caller via Engine.loadModules (the daemon fails
+		// loud BEFORE the battle starts) or built here from opts.ai.
+		// Empty set == decomp thinkingMask 0: legal slots keep score 100,
+		// random tie-break, no scripts run (MainSingles over an empty
+		// EvalMoves pass — not a special case).
+		this.observer = new Observer(battle);
+		this.modules = (opts.modules ||
+			(opts.ai ? Engine.loadModules(opts.ai, opts.aiDir) : [])).slice();
 	}
 
 	randNext() { return this.rand.randNext(); }
 	randN(n) { return this.randNext() % n; }
 
+	// PLAN §B: resolve requested module ids → module objects sorted into
+	// canonical flag order, deduped. Throws on unknown/broken ids.
+	// aiDir defaults to this directory — machine-independent.
+	static loadModules(ai, aiDir) {
+		let ids = Array.isArray(ai) ? ai.slice() : [ai];
+		if (ids.length === 1 && ids[0] === 'full') ids = ['basic', 'eval_attack', 'expert'];
+		const dir = aiDir || __dirname;
+		const mods = ids.map((id) => {
+			const m = require(path.join(dir, `${id}.js`));
+			if (!m || m.id !== id || typeof m.decide !== 'function')
+				throw new Error(`bad AI module: ${id}`);
+			return m;
+		});
+		mods.sort((a, b) => FLAG_ORDER.indexOf(a.id) - FLAG_ORDER.indexOf(b.id));
+		return mods.filter((m, i, arr) => !i || arr[i - 1].id !== m.id);
+	}
+
 	// fork ground truth, prng-frozen, transcript-suppressed (documented deviation)
 	dmg(src, def, moveId, opts = {}) {
 		const b = this.battle;
 		if (!moveId || def.fainted || (src.fainted && !opts.allowFainted)) return 0;
-		const seed = b.prng.rng.seed;
-		const saved = [seed[0], seed[1], seed[2], seed[3]];
+		// Gen5RNG.next() REPLACES rng.seed with a new array (prng.js:203) —
+		// the snapshot must restore the reference, not the old array's
+		// elements (element-wise write-back would be invisible).
+		const gen = b.prng.rng;
+		const saved = gen.seed;
 		const origAdd = b.add;
 		b.add = () => {};
 		let n;
@@ -155,7 +191,7 @@ class Engine {
 			n = b.actions.getDamage(src, def, move, true);
 		} finally {
 			b.add = origAdd;
-			seed[0] = saved[0]; seed[1] = saved[1]; seed[2] = saved[2]; seed[3] = saved[3];
+			gen.seed = saved;
 		}
 		return (typeof n === 'number') ? n : 0;
 	}
@@ -422,6 +458,7 @@ class Engine {
 	decide(req) {
 		const b = this.battle;
 		if (req.wait) return null;
+		this.observer.sync(); // replay fresh log lines (entry turns, observed moves)
 		const myIdx = (req.side && req.side.id === 'p2') ? 1 : 0;
 		const side = b.sides[myIdx];
 		if (!side) return null;
@@ -472,14 +509,120 @@ class Engine {
 		// falls to the item check before move choice. The fork has no bag
 		// action — the effect is applied directly; the zeroed bag slot persists.
 		if (this.shouldUseItem(myIdx)) this.executeUsedItem(myIdx);
-		let best = -1, bestSlot = -1;
-		for (let i = 0; i < live.moveSlots.length; i++) {
-			const ms = live.moveSlots[i];
-			if (!ms || ms.pp === 0 || ms.disabled) continue;
-			const n = this.dmg(live, foe, ms.id);
-			if (n > best) { best = n; bestSlot = i; }
+		// (3) Move evaluation (TrainerAI_Init + EvalMoves + MainSingles,
+		// spec §1): init scores/rolls, run the loaded modules in canonical
+		// flag order (ctx.cancel = decomp BREAK stops later modules), then
+		// the decomp's max-score selection with uniform random tie-break.
+		this.initEval(live);
+		const ctx = this.buildCtx(myIdx, live, foe);
+		for (const m of this.modules) {
+			if (ctx.cancel) break;
+			m.decide(ctx);
 		}
-		return bestSlot < 0 ? 'default' : `move ${bestSlot + 1}`;
+		return this.pickMove(ctx);
+	}
+
+	// TrainerAI_Init move slots (trainer_ai.c:223-240) + EvalMoves INIT
+	// invalidity: pp 0 / no move / disabled (CheckInvalidMoves) ⇒ score 0
+	// and never dispatched. Rolls are drawn for ALL 4 slots (Init step 4)
+	// regardless of legality.
+	initEval(p) {
+		this.scores = [0, 0, 0, 0];
+		this.rolls = [0, 0, 0, 0];
+		for (let i = 0; i < 4; i++) {
+			const ms = p.moveSlots[i];
+			if (this.usableSlot(p, i)) this.scores[i] = 100;
+			this.rolls[i] = 100 - (this.randNext() % 16);
+		}
+	}
+
+	usableSlot(p, i) {
+		const ms = p.moveSlots[i];
+		return !!(ms && ms.id && ms.pp > 0 && !ms.disabled);
+	}
+
+	// The module's only view (PLAN §C) — a convenience view over the live
+	// Battle, not a state copy. Score helpers act on ctx.slot (s8 = the
+	// decomp's signed-8-bit moveScore; saturating/clamping paths per spec §3
+	// are the module's own business). ctx.cancel = BREAK: stops the current
+	// module's eachSlot walk and every later module.
+	buildCtx(myIdx, live, foe) {
+		const eng = this;
+		const b = this.battle;
+		const sideIdx = (s) => (s === b.sides[1] ? 1 : 0);
+		const ctx = {
+			engine: eng, battle: b, observer: eng.observer,
+			side: b.sides[myIdx], foe: b.sides[1 - myIdx],
+			active: live, foeActive: foe,
+			turn: b.turn,
+			weather: b.field.effectiveWeather ? b.field.effectiveWeather() : b.field.weather,
+			moves: live.moveSlots, foeMoves: foe.moveSlots,
+			scores: eng.scores, rolls: eng.rolls, // same arrays — helpers mutate
+			flags: { SE, NVE, INEFF, LEVITATED, WONDER_GUARD, MAGNET_RISE, IMMUNE },
+			cancel: false, slot: -1,
+			// decomp EvalMoves per-move loop: usable slots only (invalid ones
+			// are score 0 and skipped without dispatch), ctx.slot set per
+			// iteration, halt-on-cancel checked per slot.
+			eachSlot(fn) {
+				for (let i = 0; i < 4; i++) {
+					if (ctx.cancel) return;
+					if (!eng.usableSlot(live, i)) continue;
+					ctx.slot = i;
+					fn(i);
+				}
+			},
+			addScore(v) { eng.scores[ctx.slot] = s8(eng.scores[ctx.slot] + v); },
+			subScore(v) { eng.scores[ctx.slot] = s8(eng.scores[ctx.slot] - v); },
+			setScore(v) { eng.scores[ctx.slot] = s8(v); },
+			s8, divide: decompDivide,
+			aiRand: (n) => eng.randN(n),
+			dmg: (src, def, id, opts) => eng.dmg(src, def, id, opts),
+			// eff() default variant 'active'; opts passes through (rawDef etc.)
+			eff: (id, def, opts = {}) => eng.eff(live, def, id, opts.variant || 'active', opts),
+			// data accessors (all fork/decomp-table backed)
+			move: (id) => eng.dex.moves.get(String(id).toLowerCase()),
+			speciesOf: (p) => eng.dex.species.get(p.species || p.baseSpecies),
+			effectOf: (id) => eng.moveEffectOf(id),
+			moveTypeOf: (p, id) => eng.moveTypeOf(p, id),
+			abilityOf: (p) => eng.abilityOf(p),
+			rawAbilityOf: (p) => eng.rawAbilityOf(p),
+			statOf: (p, idx) => eng.rawStat(p, idx),
+			itemRec: (id) => ITEMS[String(id).toLowerCase()] || null,
+			onDamagingTurn: (att, id) => eng.onDamagingTurn(att, id),
+			isGrounded: (p) => eng.isGrounded(p),
+			isTrapped: (p) => eng.isTrapped(p),
+			lastHitOf: (p) => eng.observer.lastHitOf(p),
+			lastUsedOf: (p) => p.lastMoveUsed || (p.lastMove && p.lastMove.id) || null,
+			// decomp battlerMoves: distinct moves observed from a side (display
+			// names, first-seen order, max 4) — what IfMove*Known reads
+			observedMoves: (s) => eng.observer.observedMoves[typeof s === 'number' ? s : sideIdx(s.side || s)],
+			entryTurn: (p) => eng.observer.entryTurn[sideIdx(p.side)][0],
+		};
+		return ctx;
+	}
+
+	// TrainerAI_MainSingles result (trainer_ai.c:311-341): slot 0 seeds the
+	// tie list unconditionally (whatever its score); slots 1-3 count only
+	// when the slot has a move; equal score appends, strictly higher resets.
+	// Uniform random pick among max-tied. FORK-SAFETY DEVIATION (NOTES):
+	// unusable slots (pp 0 / disabled) are filtered from the candidate list —
+	// the decomp may pick a locked-out move and waste the turn; the fork
+	// would reject the choice and stall — and if nothing usable remains,
+	// 'default' (the engine resolves it, e.g. Struggle).
+	pickMove(ctx) {
+		const p = ctx.active;
+		const sc = this.scores;
+		let best = sc[0];
+		const list = [0];
+		for (let i = 1; i < 4; i++) {
+			const ms = p.moveSlots[i];
+			if (!ms || !ms.id) continue; // moves[i] == MOVE_NONE
+			if (sc[i] === best) list.push(i);
+			else if (sc[i] > best) { best = sc[i]; list.length = 0; list.push(i); }
+		}
+		const usable = list.filter((i) => this.usableSlot(p, i));
+		if (!usable.length) return 'default';
+		return `move ${usable[this.randN(usable.length)] + 1}`;
 	}
 
 	// decomp BattleAI_PostKOSwitchIn (battle_lib.c:7923-8089): the side's
