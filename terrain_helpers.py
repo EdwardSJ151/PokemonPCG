@@ -16,6 +16,55 @@ def _fmt_movement(raw: str) -> str:
     return s if s and s != "None" else "Stationary"
 
 
+# ---------------------------------------------------------------------------
+# PS-canonical move name lookup  (loaded from pokeplatinum/res/moves/*/data.json)
+# ---------------------------------------------------------------------------
+
+_PT_MOVES_DIR = BASE_DIR / "pokeplatinum/res/moves"
+_MOVE_DISPLAY_CACHE: dict[str, str] = {}
+_MOVE_DISPLAY_LOADED = False
+
+# Gen 4 in-game names that differ from PS after CamelCase normalisation
+_PS_MOVE_CORRECTIONS: dict[str, str] = {
+    "Smelling Salt":  "Smelling Salts",
+    "Smoke Screen":   "Smokescreen",
+    "Thunder Shock":  "Thundershock",
+    "Vice Grip":      "Vise Grip",
+    "Hi Jump Kick":   "High Jump Kick",
+    "Selfdestruct":   "Self-Destruct",
+    "Sand-Attack":    "Sand Attack",
+}
+
+
+def _load_move_display() -> None:
+    global _MOVE_DISPLAY_LOADED
+    if _MOVE_DISPLAY_LOADED:
+        return
+    _MOVE_DISPLAY_LOADED = True
+    if not _PT_MOVES_DIR.exists():
+        return
+    for d in _PT_MOVES_DIR.iterdir():
+        f = d / "data.json"
+        if not f.exists():
+            continue
+        try:
+            name = json.loads(f.read_text(encoding="utf-8")).get("name", "")
+            if not name:
+                continue
+            name = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name)  # CamelCase → spaces
+            name = _PS_MOVE_CORRECTIONS.get(name, name)
+            _MOVE_DISPLAY_CACHE[d.name] = name          # key: snake_case dir name
+        except Exception:
+            pass
+
+
+def move_display(constant: str) -> str:
+    """MOVE_ANCIENT_POWER / ANCIENT_POWER / SMELLING_SALT → PS canonical name."""
+    _load_move_display()
+    key = constant.removeprefix("MOVE_").lower()
+    return _MOVE_DISPLAY_CACHE.get(key) or key.replace("_", " ").title()
+
+
 from emerald_helpers import *  # noqa: F401,F403
 from emerald_helpers import (  # private names skipped by import *
     _hot_springs_art_twins, _bridge_art_twins, _water_art_bridges,

@@ -18,7 +18,7 @@ import re
 import struct
 from pathlib import Path
 
-from terrain_helpers import BASE_DIR, _fmt_movement
+from terrain_helpers import BASE_DIR, _fmt_movement, move_display
 from gen4_data import (
     _s16, _s10, _parse_nds_faces, _parse_namelist, _all_material_mesh_faces,
     _cluster_levels, _parse_bdhc_stair_tiles, _parse_bdhc_flat_plates,
@@ -1685,7 +1685,7 @@ def _parse_party(td: dict) -> list[dict]:
             "species":  _pretty_species(p.get("species", "?")),
             "lvl":      p.get("level", "?"),
             "moves":    [
-                mv.replace("MOVE_", "").replace("_", " ").title()
+                move_display(mv)
                 for mv in (p.get("moves") or [])
                 if mv and mv != "MOVE_NONE"
             ],
@@ -1796,8 +1796,7 @@ def _species_name(constant: str) -> str:
 
 
 def _move_display(constant: str) -> str:
-    """MOVE_SWORDS_DANCE → 'Swords Dance'"""
-    return constant.removeprefix("MOVE_").replace("_", " ").title()
+    return move_display(constant)
 
 
 _PT_MART_TABLE_CACHE: dict | None = None
@@ -3379,8 +3378,7 @@ def _pt_tm_move_name(item_const: str) -> str | None:
                 body = text[start: text.find("};", start)]
                 for m in _PT_TM_ENTRY_RE.finditer(body):
                     num  = int(m.group(1))
-                    move = m.group(2).removeprefix("MOVE_").replace("_", " ").title()
-                    _PT_TM_MOVE_CACHE[f"ITEM_TM{num:02d}"] = move
+                    _PT_TM_MOVE_CACHE[f"ITEM_TM{num:02d}"] = move_display(m.group(2))
 
         # Route 2 — per-file JSON (pokeplatinum/res/items/data/tm*.json)
         if not _PT_TM_MOVE_CACHE and _PT_ITEMS_DIR.exists():
@@ -3391,9 +3389,7 @@ def _pt_tm_move_name(item_const: str) -> str | None:
                     teaches = d.get("teachesMove", "")
                     if teaches and teaches.startswith("MOVE_"):
                         key = f"ITEM_{path.stem.upper()}"
-                        _PT_TM_MOVE_CACHE[key] = (
-                            teaches.removeprefix("MOVE_").replace("_", " ").title()
-                        )
+                        _PT_TM_MOVE_CACHE[key] = move_display(teaches)
                 except Exception:
                     pass
 
@@ -3403,10 +3399,8 @@ def _pt_tm_move_name(item_const: str) -> str | None:
             start = text.find("sTMHMMoves[]")
             if start != -1:
                 body = text[start: text.find("};", start)]
-                for i, m in enumerate(re.finditer(r"MOVE_(\w+)", body), start=1):
-                    _PT_TM_MOVE_CACHE[f"ITEM_TM{i:02d}"] = (
-                        m.group(1).replace("_", " ").title()
-                    )
+                for i, m in enumerate(re.finditer(r"(MOVE_\w+)", body), start=1):
+                    _PT_TM_MOVE_CACHE[f"ITEM_TM{i:02d}"] = move_display(m.group(1))
 
         if not _PT_TM_MOVE_CACHE:
             import warnings

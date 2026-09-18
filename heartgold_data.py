@@ -24,7 +24,7 @@ import struct
 from collections import deque
 from pathlib import Path
 
-from terrain_helpers import BASE_DIR, _fmt_movement
+from terrain_helpers import BASE_DIR, _fmt_movement, move_display
 from hg_helpers import HG_POLYGON_OVERRIDES
 from gen4_data import (
     Narc, parse_terrain_grid, parse_prop_entries, land_material_tile_ys,
@@ -2246,8 +2246,7 @@ def _trainer_party(td: dict) -> list[dict]:
         mon: dict = {
             "species": _hg_species(p.get("species", "?")),
             "level":   p.get("level", 0),
-            "moves":   [m.replace("MOVE_", "").replace("_", " ").title()
-                        for m in (p.get("moves") or [])],
+            "moves":   [move_display(m) for m in (p.get("moves") or [])],
             "item":    (p.get("item") or "").replace("ITEM_", "").replace("_", " ").title(),
             # 0-255 "difficulty" is HG's IV field: the same byte DPPt calls ivs.
             "difficulty": p.get("difficulty", 0),
@@ -4307,16 +4306,12 @@ def _hg_tm_move_name(item_const: str) -> str | None:
                 # HMs carry explicit comments: MOVE_CUT, // HM01
                 for m in re.finditer(r"(MOVE_\w+)[^/\n]*//\s*HM(\d+)", body):
                     num = int(m.group(2))
-                    _HG_TM_MOVES_CACHE[f"ITEM_HM{num:02d}"] = (
-                        m.group(1).removeprefix("MOVE_").replace("_", " ").title()
-                    )
+                    _HG_TM_MOVES_CACHE[f"ITEM_HM{num:02d}"] = move_display(m.group(1))
                 # TMs: positional (no HM comment on their lines)
-                for i, m in enumerate(re.finditer(r"MOVE_(\w+)", body), start=1):
+                for i, m in enumerate(re.finditer(r"(MOVE_\w+)", body), start=1):
                     key = f"ITEM_TM{i:02d}"
                     if key not in _HG_TM_MOVES_CACHE:
-                        _HG_TM_MOVES_CACHE[key] = (
-                            m.group(1).replace("_", " ").title()
-                        )
+                        _HG_TM_MOVES_CACHE[key] = move_display(m.group(1))
     if not item_const.startswith(("ITEM_TM", "ITEM_HM")):
         return None
     return _HG_TM_MOVES_CACHE.get(item_const)

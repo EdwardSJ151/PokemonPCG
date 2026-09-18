@@ -3,7 +3,7 @@ import re
 import struct
 from pathlib import Path
 
-from terrain_helpers import BASE_DIR, _fmt_movement
+from terrain_helpers import BASE_DIR, _fmt_movement, move_display
 
 # ---------------------------------------------------------------------------
 # Terrain and map data, read straight from the decomp
@@ -812,7 +812,7 @@ def _load_trainer_parties_h() -> dict[str, list]:
                 if moves_m:
                     raw_moves = [x.strip() for x in moves_m.group(1).split(",")]
                     mon["moves"] = [
-                        x.replace("MOVE_", "").replace("_", " ").title()
+                        move_display(x)
                         for x in raw_moves
                         if x and x != "MOVE_NONE"
                     ]
@@ -1636,7 +1636,7 @@ def _em_exchange_pairs(
             for label in seen:
                 body = "\n".join(blocks.get(label, []))
                 for m in re.finditer(r"setvar VAR_0x8005,\s+TUTOR_MOVE_(\w+)", body):
-                    move_name = m.group(1).replace("_", " ").title()
+                    move_name = move_display(m.group(1))
                     if move_name not in seen_moves:
                         pairs.append(("Free (once)", move_name))
                         seen_moves.add(move_name)

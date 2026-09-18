@@ -48,6 +48,7 @@ from terrain_helpers import (
     skip_map,
     tile_to_char,
     resolve_cell,
+    move_display,
 )
 from emerald_data import (
     _render_encounter_index,
@@ -907,7 +908,7 @@ def _normalize_rematches(rematches, game: str) -> list:
                 "species": p.get("species", ""),
                 "level":   p.get("lvl", p.get("level", 0)),
                 "ivs":     p.get("iv_scale", p.get("iv", 0) // 3 if game == "emerald" else 0),
-                **( {"moves": p["moves"]} if p.get("moves") else {} ),
+                **( {"moves": [move_display(m) for m in p["moves"] if m and not m.startswith("(")]} if p.get("moves") else {} ),
                 **( {"item":  p["item"]}  if p.get("item")  else {} ),
             }
             for p in (r.get("party") or [])
@@ -1136,7 +1137,7 @@ def render_json(entry: dict, game: str, maps_data: list | None,
                     "species": p.get("species", ""),
                     "level":   p.get("lvl", 0),
                     "ivs":     p.get("iv", 0) // 3,
-                    **( {"moves": [m.replace("_", " ").title() for m in p["moves"] if m and not m.startswith("(")]} if p.get("moves") else {} ),
+                    **( {"moves": [move_display(m) for m in p["moves"] if m and not m.startswith("(")]} if p.get("moves") else {} ),
                     **( {"item":  p["item"]} if p.get("item") else {} ),
                 }
                 for p in (t.get("party") or [])
@@ -1349,7 +1350,7 @@ def render_json(entry: dict, game: str, maps_data: list | None,
             sp = p.get("species", "")
             lv = p.get("lvl") or p.get("level", 0)
             iv = p.get("iv", 0) if game_ == "emerald" else p.get("iv_scale", 0)
-            moves = [m.replace("MOVE_", "").replace("_", " ").title()
+            moves = [move_display(m)
                      for m in (p.get("moves") or []) if m and m not in ("", "MOVE_NONE")]
             entry_p: dict = {"species": sp, "level": int(lv), "ivs": iv}
             if moves:
@@ -2187,7 +2188,7 @@ def _render_trainer_index(trainers: list) -> list[str]:
             iv_val    = mon.get("iv", 0)
             moves     = mon.get("moves", ["(unavailable)"])
             moves_str = ", ".join(
-                mv.replace("_", " ").title() if mv.isupper() else mv
+                move_display(mv) if mv.isupper() else mv
                 for mv in moves
             )
             ab_str = mon.get("abilities_str", "?")
