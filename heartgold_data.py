@@ -3057,7 +3057,11 @@ def _item_label(script: str, prefix: str) -> str:
         tokens.pop()
     name = "_".join(tokens)
     if re.fullmatch(r"(?:tm|hm)\d+", name):
-        return name.upper()
+        upper = name.upper()
+        num   = int(re.search(r"\d+", name).group())
+        const = f"ITEM_HM{num:02d}" if name.upper().startswith("HM") else f"ITEM_TM{num:02d}"
+        move  = _hg_tm_move_name(const)
+        return f"{upper} ({move})" if move else upper
     return re.sub(r"\bPp\b", "PP", name.replace("_", " ").title())
 
 
@@ -4291,7 +4295,7 @@ _HG_TM_MOVES_CACHE: dict[str, str] | None = None
 
 
 def _hg_tm_move_name(item_const: str) -> str | None:
-    """ITEM_TM90 → 'Substitute' (move name from sTMHMMoves in item.c)."""
+    """ITEM_TM09 → 'Bullet Seed', ITEM_HM04 → 'Strength' (from sTMHMMoves)."""
     global _HG_TM_MOVES_CACHE
     if _HG_TM_MOVES_CACHE is None:
         _HG_TM_MOVES_CACHE = {}
@@ -4299,14 +4303,21 @@ def _hg_tm_move_name(item_const: str) -> str | None:
             text = _HG_ITEM_C.read_text(encoding="utf-8")
             start = text.find("sTMHMMoves[]")
             if start != -1:
-                body = text[start:]
-                end = body.find("};")
-                body = body[:end]
-                for i, m in enumerate(re.finditer(r"MOVE_(\w+)", body), start=1):
-                    _HG_TM_MOVES_CACHE[f"ITEM_TM{i:02d}"] = (
-                        m.group(1).replace("_", " ").title()
+                body = text[start: text.find("};", start)]
+                # HMs carry explicit comments: MOVE_CUT, // HM01
+                for m in re.finditer(r"(MOVE_\w+)[^/\n]*//\s*HM(\d+)", body):
+                    num = int(m.group(2))
+                    _HG_TM_MOVES_CACHE[f"ITEM_HM{num:02d}"] = (
+                        m.group(1).removeprefix("MOVE_").replace("_", " ").title()
                     )
-    if not item_const.startswith("ITEM_TM"):
+                # TMs: positional (no HM comment on their lines)
+                for i, m in enumerate(re.finditer(r"MOVE_(\w+)", body), start=1):
+                    key = f"ITEM_TM{i:02d}"
+                    if key not in _HG_TM_MOVES_CACHE:
+                        _HG_TM_MOVES_CACHE[key] = (
+                            m.group(1).replace("_", " ").title()
+                        )
+    if not item_const.startswith(("ITEM_TM", "ITEM_HM")):
         return None
     return _HG_TM_MOVES_CACHE.get(item_const)
 

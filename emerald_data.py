@@ -609,7 +609,7 @@ def _parse_item_commands(path: Path) -> dict[str, str]:
         elif current:
             m = re.match(r"(?:finditem|giveitem)\s+(ITEM_\w+)", s)
             if m:
-                result[current] = m.group(1).replace("ITEM_", "").replace("_", " ").title()
+                result[current] = _em_item_display(m.group(1))
     return result
 
 
@@ -1394,6 +1394,46 @@ def _item_name(constant: str) -> str:
     return constant.removeprefix("ITEM_").replace("_", " ").title()
 
 
+_EM_TMS_HMS_H = _EM_ROOT / "include/constants/tms_hms.h"
+_EM_TMHM_NUM_CACHE: dict[str, str] = {}   # "ITEM_TM_FOCUS_PUNCH" → "TM01", "ITEM_HM_CUT" → "HM01"
+_EM_TMHM_NUM_LOADED = False
+
+
+def _em_load_tmhm_numbers() -> None:
+    global _EM_TMHM_NUM_LOADED
+    if _EM_TMHM_NUM_LOADED:
+        return
+    _EM_TMHM_NUM_LOADED = True
+    if not _EM_TMS_HMS_H.exists():
+        return
+    text = _EM_TMS_HMS_H.read_text(encoding="utf-8")
+    tm_i = 1
+    for m in re.finditer(r"FOREACH_TM\(F\)(.*?)(?:#define FOREACH_HM|\Z)", text, re.DOTALL):
+        for name in re.findall(r"F\((\w+)\)", m.group(1)):
+            _EM_TMHM_NUM_CACHE[f"ITEM_TM_{name}"] = f"TM{tm_i:02d}"
+            tm_i += 1
+    hm_i = 1
+    for m in re.finditer(r"FOREACH_HM\(F\)(.*?)(?:#define FOREACH_TMHM|\Z)", text, re.DOTALL):
+        for name in re.findall(r"F\((\w+)\)", m.group(1)):
+            _EM_TMHM_NUM_CACHE[f"ITEM_HM_{name}"] = f"HM{hm_i:02d}"
+            hm_i += 1
+
+
+def _em_item_display(constant: str) -> str:
+    """ITEM_TM_FOCUS_PUNCH → 'TM01 (Focus Punch)', ITEM_HM_CUT → 'HM01 (Cut)', else _item_name."""
+    if constant.startswith("ITEM_TM_"):
+        _em_load_tmhm_numbers()
+        num  = _EM_TMHM_NUM_CACHE.get(constant, "TM")
+        move = constant.removeprefix("ITEM_TM_").replace("_", " ").title()
+        return f"{num} ({move})"
+    if constant.startswith("ITEM_HM_"):
+        _em_load_tmhm_numbers()
+        num  = _EM_TMHM_NUM_CACHE.get(constant, "HM")
+        move = constant.removeprefix("ITEM_HM_").replace("_", " ").title()
+        return f"{num} ({move})"
+    return _item_name(constant)
+
+
 def _species_name(constant: str) -> str:
     """SPECIES_BULBASAUR → 'Bulbasaur'"""
     return constant.removeprefix("SPECIES_").replace("_", " ").title()
@@ -1847,7 +1887,7 @@ def load_events_from_decomp(tile_entry: dict, game: str) -> dict:
                         raw = blocks[lbl]
                         body = "\n".join(raw) if isinstance(raw, list) else raw
                         for m in re.finditer(r'\bgiveitem\s+(ITEM_\w+)', body, re.I):
-                            name = m.group(1).replace("ITEM_", "").replace("_", " ").title()
+                            name = _em_item_display(m.group(1))
                             if name not in found:
                                 found.append(name)
                         for m in re.finditer(
@@ -2022,7 +2062,7 @@ def load_events_from_decomp(tile_entry: dict, game: str) -> dict:
         for evt in map_data.get("bg_events", []):
             if evt.get("type") == "hidden_item":
                 item_raw  = evt.get("item", "")
-                item_name = item_raw.replace("ITEM_", "").replace("_", " ").title()
+                item_name = _em_item_display(item_raw)
                 result["hidden_items"].append({
                     "x": evt.get("x", 0), "y": evt.get("y", 0),
                     "item_name": item_name,
@@ -2358,7 +2398,7 @@ _EM_PLAIN_GOTO_RE    = re.compile(r"^goto\s+(\w+)$", re.I)
 
 
 def _em_item_name(constant: str) -> str:
-    return constant.removeprefix("ITEM_").replace("_", " ").title()
+    return _em_item_display(constant)
 
 
 def _em_msg_from_line(line: str, text_by_label: dict) -> str | None:

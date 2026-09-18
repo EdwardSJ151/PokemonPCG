@@ -203,6 +203,15 @@ _VISIBLE_ITEMS_CACHE: list[str] | None = None
 _PT_ITEM_VAR_RE = re.compile(r"SetVar\s+VAR_0x8004\s*,\s*(ITEM_\w+)", re.I)
 
 
+def _pt_item_display(constant: str) -> str:
+    """ITEM_TM80 → 'TM80 (Rock Slide)', ITEM_POKE_BALL → 'Poke Ball'."""
+    move = _pt_tm_move_name(constant)
+    if move:
+        num = constant.removeprefix("ITEM_TM")
+        return f"TM{num} ({move})"
+    return _item_name(constant)
+
+
 def _get_visible_item_name(script_id: int) -> str:
     global _VISIBLE_ITEMS_CACHE
     if _VISIBLE_ITEMS_CACHE is None:
@@ -215,7 +224,14 @@ def _get_visible_item_name(script_id: int) -> str:
                     # "VisibleItems_Route203_PokeBall" → "Poke Ball"
                     parts = label.split("_", 2)
                     raw = parts[2] if len(parts) > 2 else label
-                    name = re.sub(r"([A-Z])", r" \1", raw).strip()
+                    # "TM80" → "TM80 (Rock Slide)" via the move table
+                    tm_m = re.fullmatch(r"TM(\d+)", raw)
+                    if tm_m:
+                        num = int(tm_m.group(1))
+                        move = _pt_tm_move_name(f"ITEM_TM{num:02d}")
+                        name = f"TM{num:02d} ({move})" if move else f"TM{num:02d}"
+                    else:
+                        name = re.sub(r"([A-Z])", r" \1", raw).strip()
                     entries.append(name)
         _VISIBLE_ITEMS_CACHE = entries
     idx = script_id - _VISIBLE_ITEM_OFFSET
@@ -244,7 +260,7 @@ def _resolve_item_ball(map_name: str, script_id: int) -> str:
     bfs_lines = _pt_bfs_body(label, body_dict)
     body = "\n".join(bfs_lines)
     items = list(dict.fromkeys(
-        _item_name(c) for c in _PT_ITEM_VAR_RE.findall(body)
+        _pt_item_display(c) for c in _PT_ITEM_VAR_RE.findall(body)
     ))
     return " / ".join(items) if items else name
 
@@ -264,8 +280,7 @@ def _get_hidden_item(script_id: int) -> tuple[str, int] | None:
                 r"HIDDEN_ITEM_ENTRY\(\s*(ITEM_\w+)\s*,\s*(\d+)"
             )
             for m in entry_re.finditer(HIDDEN_ITEMS_H.read_text(encoding="utf-8")):
-                raw_name = m.group(1).replace("ITEM_", "").replace("_", " ").title()
-                entries.append((raw_name, int(m.group(2))))
+                entries.append((_pt_item_display(m.group(1)), int(m.group(2))))
         _HIDDEN_ITEMS_CACHE = entries
     idx = script_id - _HIDDEN_ITEM_OFFSET
     if 0 <= idx < len(_HIDDEN_ITEMS_CACHE):
