@@ -903,8 +903,13 @@ def _normalize_rematches(rematches, game: str) -> list:
         if r is None:
             continue
         party = [
-            {"species": p.get("species", ""), "level": p.get("lvl", p.get("level", 0)),
-             "ivs": p.get("iv_scale", p.get("iv", 0) // 3 if game == "emerald" else 0)}
+            {
+                "species": p.get("species", ""),
+                "level":   p.get("lvl", p.get("level", 0)),
+                "ivs":     p.get("iv_scale", p.get("iv", 0) // 3 if game == "emerald" else 0),
+                **( {"moves": p["moves"]} if p.get("moves") else {} ),
+                **( {"item":  p["item"]}  if p.get("item")  else {} ),
+            }
             for p in (r.get("party") or [])
         ]
         out.append({
@@ -1126,9 +1131,16 @@ def render_json(entry: dict, game: str, maps_data: list | None,
             last_pokemon = ""
             half_hp = ""
             vs_rem = _normalize_rematches(t.get("vs_rematches", []), "emerald")
-            party  = [{"species": p.get("species", ""), "level": p.get("lvl", 0),
-                       "ivs": p.get("iv", 0) // 3}
-                      for p in (t.get("party") or [])]
+            party  = [
+                {
+                    "species": p.get("species", ""),
+                    "level":   p.get("lvl", 0),
+                    "ivs":     p.get("iv", 0) // 3,
+                    **( {"moves": [m.replace("_", " ").title() for m in p["moves"] if m and not m.startswith("(")]} if p.get("moves") else {} ),
+                    **( {"item":  p["item"]} if p.get("item") else {} ),
+                }
+                for p in (t.get("party") or [])
+            ]
         elif game == "heartgold":
             col_t, row_t = t.get("x", 0) - col_off, t.get("z", 0) - row_off
             tid    = (t.get("const") or t.get("trainer_const")
@@ -1147,8 +1159,18 @@ def render_json(entry: dict, game: str, maps_data: list | None,
             last_pokemon = msgs.get("TRMSG_LAST_POKE", "")
             half_hp = msgs.get("TRMSG_LAST_POKE_HALF", "")
             vs_rem = _normalize_rematches(t.get("rematches") or t.get("vs_rematches", []), "heartgold")
-            party  = [{"species": p.get("species", ""), "level": p.get("level", 0), "ivs": 0}
-                      for p in (t.get("party") or [])]
+            party  = [
+                {
+                    "species": p.get("species", ""),
+                    "level":   p.get("level", 0),
+                    "ivs":     0,
+                    **( {"moves": p["moves"]} if p.get("moves") else {} ),
+                    **( {"item":  p["item"]}  if p.get("item")  else {} ),
+                    **( {"gender_override":  p["gender_override"]}  if p.get("gender_override")  else {} ),
+                    **( {"ability_override": p["ability_override"]} if p.get("ability_override") else {} ),
+                }
+                for p in (t.get("party") or [])
+            ]
         else:  # platinum
             col_t, row_t = t.get("x", 0) - col_off, t.get("z", 0) - row_off
             tid    = (t.get("trainer_const") or t.get("const")
@@ -1168,8 +1190,16 @@ def render_json(entry: dict, game: str, maps_data: list | None,
             last_pokemon = next((v for k, v in msgs.items() if "LAST_BATTLER" in k.upper() and "HALF" not in k.upper()), "")
             half_hp = next((v for k, v in msgs.items() if "HALF_HP" in k.upper() or ("LAST_BATTLER" in k.upper() and "HALF" in k.upper())), "")
             vs_rem = _normalize_rematches(t.get("vs_rematches", []), "platinum")
-            party  = [{"species": p.get("species", ""), "level": p.get("lvl", p.get("level", 0)), "ivs": p.get("iv_scale", 0)}
-                      for p in (t.get("party") or [])]
+            party  = [
+                {
+                    "species": p.get("species", ""),
+                    "level":   p.get("lvl", p.get("level", 0)),
+                    "ivs":     p.get("iv_scale", 0),
+                    **( {"moves": p["moves"]} if p.get("moves") else {} ),
+                    **( {"item":  p["item"]}  if p.get("item")  else {} ),
+                }
+                for p in (t.get("party") or [])
+            ]
         trainers.append({
             "trainer_id":      tid,
             "col":             col_t,
@@ -1183,6 +1213,7 @@ def render_json(entry: dict, game: str, maps_data: list | None,
             "sight_range":     0 if is_leader else 4,
             "prize_money":     prize,
             "double":          double,
+            "ai_flags":        t.get("ai_flags") or [],
             "items":           items_t,
             "gives_item":      t.get("gives_item"),
             "pre_battle":      pre,

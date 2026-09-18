@@ -720,6 +720,26 @@ def _load_trainers_h() -> dict[str, dict]:
                     for x in raw.split(",")
                     if x.strip() not in ("", "ITEM_NONE")
                 ]
+            mai = re.search(r"\.aiFlags\s*=\s*([^,\n]+)", body)
+            if mai:
+                _em_ai_drop = {"AI_SCRIPT_ROAMING", "AI_SCRIPT_SAFARI", "AI_SCRIPT_FIRST_BATTLE"}
+                _em_ai_rename = {
+                    "CHECK_BAD_MOVE":        "BASIC",
+                    "TRY_TO_FAINT":          "EVAL_ATTACK",
+                    "CHECK_VIABILITY":       "EXPERT",
+                    "PREFER_POWER_EXTREMES": "PRIORITIZE_EXTREMES",
+                    "PREFER_BATON_PASS":     "BATON_PASS",
+                    "DOUBLE_BATTLE":         "TAG_STRATEGY",
+                    "HP_AWARE":              "CHECK_HP",
+                    "TRY_SUNNY_DAY_START":   "WEATHER",
+                }
+                flags = []
+                for f in re.findall(r"AI_SCRIPT_\w+", mai.group(1)):
+                    if f in _em_ai_drop:
+                        continue
+                    name = f.replace("AI_SCRIPT_", "")
+                    flags.append(_em_ai_rename.get(name, name))
+                entry["ai_flags"] = flags
             result[const] = entry
     _TRAINERS_H_CACHE = result
     return result
@@ -1193,6 +1213,7 @@ def _enrich_trainers(trainers: list) -> None:
         td = trainers_h.get(trainer_const, {}) if trainer_const else {}
 
         t["tr_name"]      = td.get("name") or trainer_const or t.get("graphics_id", "?")
+        t["ai_flags"]     = td.get("ai_flags") or []
         cls               = td.get("class", "")
         t["tr_class"]     = cls
         t["tr_class_disp"] = (

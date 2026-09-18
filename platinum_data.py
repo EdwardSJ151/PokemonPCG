@@ -1716,6 +1716,7 @@ def _build_trainer_entry(x: int, z: int, td: dict, is_event: bool,
         "name":        td.get("name", "?"),
         "class":       trainer_class,
         "double":      td.get("double_battle", False),
+        "ai_flags":    [f.replace("AI_FLAG_", "") for f in (td.get("ai_flags") or [])],
         "items":       [i for i in (td.get("items") or []) if i],
         "messages":    messages,
         "is_event":    is_event,
@@ -2276,6 +2277,7 @@ def _pt_gym_leader_info(map_name: str, script_idx: int) -> dict | None:
         "trainer_const":  trainer_const,
         "name":           td.get("name", "?"),
         "class":          td.get("class", ""),
+        "ai_flags":       [f.replace("AI_FLAG_", "") for f in (td.get("ai_flags") or [])],
         "items":          [_item_name(i) for i in (td.get("items") or []) if i],
         "pre_battle":     [_clean_pt_text(t) for t in pre_battle],
         "post_battle":    [_clean_pt_text(t) for t in post_battle],
@@ -3326,31 +3328,61 @@ def render_static_encounter_section(encounters: list,
 # ---------------------------------------------------------------------------
 
 _PT_PRIZE_C = BASE_DIR / "pokeplatinum/src/scrcmd_game_corner_prize.c"
-_PT_ITEMS_DIR = BASE_DIR / "pokeplatinum/res/items/data"
+_PT_ITEMS_DIR    = BASE_DIR / "pokeplatinum/res/items/data"
+_PT_TM_MAP_H     = BASE_DIR / "pokeplatinum/res/items/item_tm_move_map.h"
 _PT_TM_MOVE_CACHE: dict[str, str] = {}
 _PT_TM_MOVE_LOADED = False
 
 
 def _pt_tm_move_name(item_const: str) -> str | None:
-    """ITEM_TM90 → 'Substitute' (from res/items/data/tm90.json teachesMove field)."""
+    """ITEM_TM90 → 'Substitute'.
+
+    Route 1 (preferred): parse res/items/data/tm*.json teachesMove fields.
+    Route 2 (fallback):  parse res/items/item_tm_move_map.h — the generated C
+                         header that item.c includes, same sTMHMMoves[] format
+                         as pokeheartgold/src/item.c.
+    Hard-warns if both routes yield zero entries (silent cache = invisible bug).
+    """
     global _PT_TM_MOVE_LOADED
     if not _PT_TM_MOVE_LOADED:
         _PT_TM_MOVE_LOADED = True
+
+        # Route 1 — per-file JSON (pokeplatinum/res/items/data/tm*.json)
         if _PT_ITEMS_DIR.exists():
-            import glob
             for path in _PT_ITEMS_DIR.glob("tm*.json"):
                 try:
                     with open(path, encoding="utf-8") as f:
                         d = json.load(f)
                     teaches = d.get("teachesMove", "")
                     if teaches and teaches.startswith("MOVE_"):
-                        # tm90.json → ITEM_TM90
-                        num = path.stem.upper()  # "TM90"
-                        key = f"ITEM_{num}"
-                        move = teaches.removeprefix("MOVE_").replace("_", " ").title()
-                        _PT_TM_MOVE_CACHE[key] = move
+                        key = f"ITEM_{path.stem.upper()}"
+                        _PT_TM_MOVE_CACHE[key] = (
+                            teaches.removeprefix("MOVE_").replace("_", " ").title()
+                        )
                 except Exception:
                     pass
+
+        # Route 2 — generated C header (same sTMHMMoves[] format as HG item.c)
+        if not _PT_TM_MOVE_CACHE and _PT_TM_MAP_H.exists():
+            text = _PT_TM_MAP_H.read_text(encoding="utf-8")
+            start = text.find("sTMHMMoves[]")
+            if start != -1:
+                body = text[start: text.find("};", start)]
+                for i, m in enumerate(re.finditer(r"MOVE_(\w+)", body), start=1):
+                    _PT_TM_MOVE_CACHE[f"ITEM_TM{i:02d}"] = (
+                        m.group(1).replace("_", " ").title()
+                    )
+
+        if not _PT_TM_MOVE_CACHE:
+            import warnings
+            warnings.warn(
+                "platinum_data: TM move table is empty — "
+                "res/items/data/tm*.json not found and "
+                "res/items/item_tm_move_map.h not found. "
+                "TM names will be missing from Platinum output.",
+                stacklevel=2,
+            )
+
     if not item_const.startswith("ITEM_TM"):
         return None
     return _PT_TM_MOVE_CACHE.get(item_const)

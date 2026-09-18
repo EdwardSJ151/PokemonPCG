@@ -2241,8 +2241,9 @@ def _rematch_chain(const: str) -> list[str]:
 
 
 def _trainer_party(td: dict) -> list[dict]:
-    return [
-        {
+    result = []
+    for p in (td.get("party") or []):
+        mon: dict = {
             "species": _hg_species(p.get("species", "?")),
             "level":   p.get("level", 0),
             "moves":   [m.replace("MOVE_", "").replace("_", " ").title()
@@ -2251,8 +2252,14 @@ def _trainer_party(td: dict) -> list[dict]:
             # 0-255 "difficulty" is HG's IV field: the same byte DPPt calls ivs.
             "difficulty": p.get("difficulty", 0),
         }
-        for p in (td.get("party") or [])
-    ]
+        gender = p.get("genderOverride", "")
+        if gender and gender != "TRPOKE_GENDER_OVERRIDE_OFF":
+            mon["gender_override"] = gender.replace("TRPOKE_GENDER_OVERRIDE_", "").title()
+        ability = p.get("abilityOverride", "")
+        if ability and ability != "TRPOKE_ABILITY_OVERRIDE_OFF":
+            mon["ability_override"] = ability.replace("TRPOKE_ABILITY_OVERRIDE_", "").title()
+        result.append(mon)
+    return result
 
 
 def _trainer_prize(td: dict) -> int | None:
@@ -2270,6 +2277,17 @@ def _trainer_prize(td: dict) -> int | None:
     return prize * 2 if td.get("double") else prize
 
 
+_HG_AI_FLAG_NAMES: list[str] = [
+    "BASIC", "EVAL_ATTACK", "EXPERT", "SETUP_FIRST_TURN", "RISKY",
+    "PRIORITIZE_EXTREMES", "BATON_PASS", "TAG_STRATEGY", "CHECK_HP",
+    "WEATHER", "HARRASSMENT",
+]
+
+
+def _decode_hg_ai_flags(mask: int) -> list[str]:
+    return [name for i, name in enumerate(_HG_AI_FLAG_NAMES) if mask & (1 << i)]
+
+
 def _build_trainer(x: int, z: int, const: str, td: dict,
                    category: str = "Standard") -> dict:
     return {
@@ -2281,6 +2299,7 @@ def _build_trainer(x: int, z: int, const: str, td: dict,
         "name":     (td.get("name") or "?").replace("{TRNAME}", "").strip(" -"),
         "class":    td.get("class", ""),
         "double":   bool(td.get("double")),
+        "ai_flags": _decode_hg_ai_flags(td.get("ai_flags") or 0),
         "items":    [i.replace("ITEM_", "").replace("_", " ").title()
                      for i in (td.get("items") or []) if i],
         "messages": {m.get("type", ""): m.get("message", "")
@@ -3282,6 +3301,7 @@ def _hg_gym_leader_info(code: str, label: str) -> dict | None:
         "trainer_const": trainer_const,
         "name":          (td.get("name") or "?").replace("{TRNAME}", "").strip(" -"),
         "class":         td.get("class", ""),
+        "ai_flags":      _decode_hg_ai_flags(td.get("ai_flags") or 0),
         "items":         [i.replace("ITEM_", "").replace("_", " ").title()
                           for i in (td.get("items") or []) if i],
         "pre_battle":    pre_battle,
@@ -3321,6 +3341,7 @@ def _hg_rival_info(code: str, label: str) -> dict | None:
         "trainer_const": trainer_const,
         "name":          "Silver",
         "class":         td.get("class", ""),
+        "ai_flags":      _decode_hg_ai_flags(td.get("ai_flags") or 0),
         "items":         [i.replace("ITEM_", "").replace("_", " ").title()
                           for i in (td.get("items") or []) if i],
         "party":         _trainer_party(td),
